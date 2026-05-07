@@ -27,3 +27,5 @@ dist-ssr
 # User uploads
 backend/uploads/*
 !backend/uploads/.gitkeep
+
+# Trigger GitHub contributors cache refresh
