@@ -10,11 +10,13 @@
  * @param {number} seconds  - Total seconds studied in this session
  * @returns {{ xp, totalStudySeconds, xpGain } | null}
  */
+import API_URL from "@/config";
+
 export const saveSession = async (userId, seconds) => {
   if (!userId || seconds < 120) return null; // minimum 2 min
 
   try {
-    const res = await fetch(`http://localhost:5000/api/users/${userId}/xp`, {
+    const res = await fetch(`${API_URL}/api/users/${userId}/xp`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

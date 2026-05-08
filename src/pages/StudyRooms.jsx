@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
+import API_URL from "@/config";
 
 const ROOM_VIBES = [
   { tag: "🔥 Intense", bg: "from-orange-500/10 via-amber-500/5 to-transparent", border: "border-orange-400/20", glow: "hover:shadow-[0_0_30px_rgba(249,115,22,0.08)]", accent: "text-orange-500", accentBg: "bg-orange-500/10", stripe: "from-orange-500/40 via-amber-400/20 to-transparent" },
@@ -201,7 +202,7 @@ const StudyRooms = () => {
 
   const fetchRooms = async () => {
     try {
-      const { data } = await axios.get("http://localhost:5000/api/rooms");
+      const { data } = await axios.get(`${API_URL}/api/rooms`);
       setRooms(data);
     } catch (error) {
       console.error(error);
@@ -212,7 +213,7 @@ const StudyRooms = () => {
   const createRoom = async () => {
     if (!newRoomName.trim()) return;
     try {
-      const { data } = await axios.post("http://localhost:5000/api/rooms", {
+      const { data } = await axios.post(`${API_URL}/api/rooms`, {
         name: newRoomName,
         topic: newTopic,
         isPrivate
@@ -239,7 +240,7 @@ const StudyRooms = () => {
 
   const deleteRoom = async (id) => {
     try {
-      await axios.delete(`http://localhost:5000/api/rooms/${id}`);
+      await axios.delete(`${API_URL}/api/rooms/${id}`);
       setRooms(rooms.filter((r) => (r._id || r.id) !== id));
     } catch (e) {
       toast.error("Failed to delete room");

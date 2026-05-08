@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState } from "react";
+import API_URL from "@/config";
 
 const AuthContext = createContext({ 
   user: null, 
@@ -21,7 +22,7 @@ export const AuthProvider = ({ children }) => {
 
   const fetchProfile = async (token) => {
     try {
-      const res = await fetch("/api/auth/me", {
+      const res = await fetch(`${API_URL}/api/auth/me`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -63,7 +64,7 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const signIn = async (email, password) => {
-    const res = await fetch("/api/auth/login", {
+    const res = await fetch(`${API_URL}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password })
@@ -79,7 +80,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const signUp = async (email, password, full_name, username) => {
-    const res = await fetch("/api/auth/register", {
+    const res = await fetch(`${API_URL}/api/auth/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email, password, full_name, username })

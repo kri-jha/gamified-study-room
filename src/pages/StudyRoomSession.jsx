@@ -8,8 +8,9 @@ import { toast } from "sonner";
 import PageTransition from "@/components/PageTransition";
 import { useAuth } from "@/contexts/AuthContext";
 import { saveSession } from "@/lib/saveSession";
+import API_URL from "@/config";
 
-const socket = io("http://localhost:5000");
+const socket = io(API_URL);
 
 // ─── Background-safe Timer ────────────────────────────────────────────────────
 // Instead of incrementing seconds, we store the exact Date.now() when timer
@@ -61,7 +62,7 @@ const StudyRoomSession = () => {
   useEffect(() => {
     const fetchRoom = async () => {
       try {
-        const { data } = await axios.get("http://localhost:5000/api/rooms");
+        const { data } = await axios.get(`${API_URL}/api/rooms`);
         const currentRoom = data.find(r => r._id === id || r.code === id);
         if (!currentRoom) { toast.error("Room not found"); navigate("/rooms"); return; }
         setRoom(currentRoom);
@@ -174,7 +175,7 @@ const StudyRoomSession = () => {
   // ── Leaderboard ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab === "leaderboard") {
-      axios.get("http://localhost:5000/api/users/leaderboard")
+      axios.get(`${API_URL}/api/users/leaderboard`)
         .then(res => setLeaderboard(res.data))
         .catch(err => console.error("Leaderboard fetch failed", err));
     }
@@ -199,7 +200,7 @@ const StudyRoomSession = () => {
     setIsAiLoading(true);
     setNewAiMessage("");
     try {
-      const { data } = await axios.post("http://localhost:5000/api/ai/chat", { message: userMsg.text });
+      const { data } = await axios.post(`${API_URL}/api/ai/chat`, { message: userMsg.text });
       setAiMessages(prev => [...prev, { sender: "Tutor", text: data.reply }]);
     } catch (err) {
       toast.error("AI couldn't respond right now.");
