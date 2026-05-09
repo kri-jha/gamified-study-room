@@ -27,6 +27,11 @@ const REMINDER_MESSAGES = {
     { title: "👀 Eye Rest", body: "Look away from the screen for 20 seconds. Your eyes thank you!" },
     { title: "💧 Hydration Check", body: "Have you had water recently? Stay hydrated, stay sharp!" },
   ],
+  timer: [
+    { title: "⏰ Time's Up!", body: "Your study timer has finished. Great job!" },
+    { title: "🔔 Task Complete", body: "You reached your focus goal! Take a short break." },
+    { title: "🏆 Session Finished", body: "Timer complete! Don't forget to save your XP." },
+  ],
 };
 
 export function getRandomMessage(vibe = "motivational") {

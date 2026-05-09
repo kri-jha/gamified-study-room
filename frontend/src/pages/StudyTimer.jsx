@@ -1,16 +1,19 @@
 import { useState, useEffect, useRef } from "react";
-import { Play, Pause, RotateCcw, Square, Zap } from "lucide-react";
+import { Play, Pause, RotateCcw, Square, Zap, Clock, Timer as TimerIcon } from "lucide-react";
 import PageTransition from "@/components/PageTransition";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
 import { saveSession } from "@/lib/saveSession";
 import { Link } from "react-router-dom";
+import { sendNotification } from "@/lib/notificationService";
 
 // ── Background-safe Timer Keys ────────────────────────────────────────────────
 const T_START = "gazen_solo_timer_start";
 const T_OFFSET = "gazen_solo_timer_offset";
 const T_RUNNING = "gazen_solo_timer_running";
+const T_MODE = "gazen_solo_timer_mode";
+const T_TIMER_INITIAL = "gazen_solo_timer_initial";
 
 const getElapsed = () => {
   const start = Number(localStorage.getItem(T_START) || 0);
@@ -26,13 +29,20 @@ const StudyTimer = () => {
   const [isRunning, setIsRunning] = useState(
     () => localStorage.getItem(T_RUNNING) === "true"
   );
+  const [mode, setMode] = useState(
+    () => localStorage.getItem(T_MODE) || "stopwatch"
+  );
+  const [timerInitial, setTimerInitial] = useState(
+    () => Number(localStorage.getItem(T_TIMER_INITIAL) || 1500) // Default 25 mins
+  );
+
   const [tabSwitchCount, setTabSwitchCount] = useState(0);
   const [warnings, setWarnings] = useState([]);
   const [isSaving, setIsSaving] = useState(false);
-  // Track last session result for "session saved" banner
   const [lastSession, setLastSession] = useState(null);
 
   const tickRef = useRef(null);
+  const audioRef = useRef(null);
 
   // ── Re-sync display when tab becomes active ───────────────────────────────
   useEffect(() => {
@@ -40,27 +50,55 @@ const StudyTimer = () => {
       if (!document.hidden) {
         setSeconds(getElapsed());
       } else if (isRunning) {
-        // Only warn for solo timer (focus mode)
         setTabSwitchCount((c) => c + 1);
-        setWarnings((w) => [...w, `⚠️ Tab switch at ${formatTime(getElapsed())}`]);
+        setWarnings((w) => [...w, `⚠️ Tab switch at ${formatTime(getDisplaySeconds(getElapsed()))}`]);
       }
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [isRunning]);
+  }, [isRunning, mode, timerInitial]);
 
   // ── Tick the display every second ────────────────────────────────────────
   useEffect(() => {
     if (isRunning) {
-      tickRef.current = setInterval(() => setSeconds(getElapsed()), 1000);
+      tickRef.current = setInterval(() => {
+        const elapsed = getElapsed();
+        setSeconds(elapsed);
+
+        // Check for timer completion
+        if (mode === "timer" && elapsed >= timerInitial) {
+          handleTimerComplete();
+        }
+      }, 1000);
     } else {
       clearInterval(tickRef.current);
     }
     return () => clearInterval(tickRef.current);
-  }, [isRunning]);
+  }, [isRunning, mode, timerInitial]);
+
+  const handleTimerComplete = () => {
+    handlePause();
+    setSeconds(timerInitial); // Snap to end
+    sendNotification("timer");
+    toast.success("⏰ Time's up! Great session.");
+    
+    // Play sound if possible
+    try {
+      if (!audioRef.current) {
+        audioRef.current = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
+      }
+      audioRef.current.play();
+    } catch (e) {
+      console.log("Audio play blocked");
+    }
+  };
 
   // ── Controls ──────────────────────────────────────────────────────────────
   const handleStart = () => {
+    if (mode === "timer" && seconds >= timerInitial) {
+      toast.error("Reset the timer to start again!");
+      return;
+    }
     localStorage.setItem(T_OFFSET, String(seconds));
     localStorage.setItem(T_START, String(Date.now()));
     localStorage.setItem(T_RUNNING, "true");
@@ -76,7 +114,7 @@ const StudyTimer = () => {
   };
 
   const handleReset = () => {
-    handlePause(); // stop and snapshot offset
+    handlePause();
     setSeconds(0);
     localStorage.removeItem(T_START);
     localStorage.removeItem(T_OFFSET);
@@ -86,9 +124,9 @@ const StudyTimer = () => {
   };
 
   const handleStop = async () => {
+    const elapsed = mode === "timer" ? Math.min(seconds, timerInitial) : seconds;
     handlePause();
-    const elapsed = getElapsed();
-    handleReset(); // clear the clock immediately for UX
+    handleReset();
 
     if (elapsed < 120) {
       toast.info("Study for at least 2 minutes to earn XP!");
@@ -107,13 +145,35 @@ const StudyTimer = () => {
     if (result) {
       setLastSession({ ...result, seconds: elapsed });
       toast.success(`🎉 Session saved! +${result.xpGain} XP`);
-      await refreshProfile(); // re-sync profile side bar
+      await refreshProfile();
     } else {
       toast.error("Couldn't save session to server");
     }
   };
 
+  const switchMode = (newMode) => {
+    if (isRunning) {
+      toast.info("Pause the clock before switching modes.");
+      return;
+    }
+    setMode(newMode);
+    localStorage.setItem(T_MODE, newMode);
+    handleReset();
+  };
+
+  const updateTimerInitial = (mins) => {
+    const secs = mins * 60;
+    setTimerInitial(secs);
+    localStorage.setItem(T_TIMER_INITIAL, String(secs));
+    handleReset();
+  };
+
   // ── Formatting ────────────────────────────────────────────────────────────
+  const getDisplaySeconds = (s) => {
+    if (mode === "stopwatch") return s;
+    return Math.max(0, timerInitial - s);
+  };
+
   const formatTime = (s) => {
     const h = Math.floor(s / 3600).toString().padStart(2, "0");
     const m = Math.floor((s % 3600) / 60).toString().padStart(2, "0");
@@ -121,26 +181,44 @@ const StudyTimer = () => {
     return `${h}:${m}:${sec}`;
   };
 
+  const displaySeconds = getDisplaySeconds(seconds);
   const previewXp = Math.floor(Math.floor(seconds / 60) / 2)
     + (seconds >= 3600 ? Math.floor(Math.floor(seconds / 60) / 60) * 2 : 0);
-  const progressDeg = (seconds % 60) * 6;
+  
+  // Progress calc
+  let progressPct;
+  if (mode === "stopwatch") {
+    progressPct = (seconds % 60) / 60;
+  } else {
+    progressPct = displaySeconds / timerInitial;
+  }
 
   return (
     <PageTransition>
       <div className="min-h-screen flex items-center justify-center p-4 pt-20">
         <div className="max-w-lg w-full space-y-6">
           <div className="text-center">
-            <h1 className="text-3xl font-display font-extrabold text-foreground">⏱️ Focus Timer</h1>
-            <p className="text-muted-foreground text-sm mt-1">Stay focused. Earn XP. Build your streak.</p>
-            {isRunning && (
-              <p className="text-emerald-500 text-xs font-bold mt-2 flex items-center justify-center gap-1.5">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                </span>
-                Timer runs even if you switch tabs
-              </p>
-            )}
+            <h1 className="text-3xl font-display font-extrabold text-foreground">
+              {mode === "stopwatch" ? "⏱️ Stopwatch" : "⏰ Focus Timer"}
+            </h1>
+            
+            {/* Mode Switcher */}
+            <div className="flex justify-center mt-4">
+              <div className="bg-secondary/50 p-1 rounded-xl flex gap-1">
+                <button
+                  onClick={() => switchMode("stopwatch")}
+                  className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${mode === "stopwatch" ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  <Clock className="w-4 h-4" /> Stopwatch
+                </button>
+                <button
+                  onClick={() => switchMode("timer")}
+                  className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${mode === "timer" ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  <TimerIcon className="w-4 h-4" /> Timer
+                </button>
+              </div>
+            </div>
           </div>
 
           {/* Timer Circle */}
@@ -152,14 +230,15 @@ const StudyTimer = () => {
                   cx="128" cy="128" r="120" fill="none"
                   stroke={!isRunning && seconds > 0 ? "hsl(25, 90%, 55%)" : "hsl(220, 80%, 55%)"}
                   strokeWidth="8" strokeLinecap="round"
-                  strokeDasharray={`${(progressDeg / 360) * 754} 754`}
+                  strokeDasharray={`${progressPct * 754} 754`}
                   className="transition-all duration-300"
                 />
               </svg>
               <div className="absolute inset-0 flex flex-col items-center justify-center">
-                <p className="text-5xl font-display font-bold text-foreground tracking-widest">{formatTime(seconds)}</p>
+                <p className="text-5xl font-display font-bold text-foreground tracking-widest">{formatTime(displaySeconds)}</p>
                 <p className="text-sm text-muted-foreground mt-2">
-                  {!isRunning && seconds === 0 ? "Ready" : !isRunning ? "⏸ Paused" : "🟢 Studying"}
+                  {mode === "timer" && displaySeconds === 0 && seconds > 0 ? "🏁 Done!" : 
+                   !isRunning && seconds === 0 ? "Ready" : !isRunning ? "⏸ Paused" : "🟢 Studying"}
                 </p>
                 {seconds >= 120 && (
                   <p className="text-xs text-primary font-semibold mt-1 flex items-center gap-1">
@@ -169,6 +248,21 @@ const StudyTimer = () => {
               </div>
             </div>
           </div>
+
+          {/* Timer Presets (Only in Timer mode when not running) */}
+          {mode === "timer" && !isRunning && seconds === 0 && (
+            <div className="flex flex-wrap justify-center gap-2 animate-in fade-in slide-in-from-top-2">
+              {[15, 25, 45, 60].map((m) => (
+                <button
+                  key={m}
+                  onClick={() => updateTimerInitial(m)}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold border transition-all ${timerInitial === m * 60 ? "bg-primary/10 border-primary text-primary" : "border-border hover:border-primary/50 text-muted-foreground"}`}
+                >
+                  {m}m
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Controls */}
           <div className="flex justify-center gap-4">
