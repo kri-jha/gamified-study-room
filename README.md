@@ -1,4 +1,4 @@
-# 🎮 Grind Ace Zen — Gamified Study Room
+# 🎮 Gamified Study Room
 
 > *Study smarter. Level up. Conquer your goals.*
 
