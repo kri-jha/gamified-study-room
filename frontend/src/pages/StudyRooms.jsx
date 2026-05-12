@@ -1,11 +1,13 @@
 import { useState, useEffect } from "react";
-import { Plus, Users, Lock, Unlock, Copy, Trash2, DoorOpen, Radio, Wifi, Sparkles, Search, Volume2, Headphones, Timer, MessageCircle, Mic, MicOff, Crown } from "lucide-react";
+import { Plus, Users, Lock, Unlock, Copy, Trash2, DoorOpen, Radio, Wifi, Sparkles, Search, Headphones, Timer, Crown, KeyRound } from "lucide-react";
 import PageTransition from "@/components/PageTransition";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import API_URL from "@/config";
+import { useAuth } from "@/contexts/AuthContext";
+import { Link } from "react-router-dom";
 
 const ROOM_VIBES = [
   { tag: "🔥 Intense", bg: "from-orange-500/10 via-amber-500/5 to-transparent", border: "border-orange-400/20", glow: "hover:shadow-[0_0_30px_rgba(249,115,22,0.08)]", accent: "text-orange-500", accentBg: "bg-orange-500/10", stripe: "from-orange-500/40 via-amber-400/20 to-transparent" },
@@ -27,17 +29,33 @@ const PulsingDot = ({ color = "bg-emerald-400", size = "w-2 h-2" }) => (
   </span>
 );
 
-const MemberAvatar = ({ member, index, isHost }) => (
+const isAvatarImage = (avatar = "") =>
+  /^https?:\/\//i.test(avatar) || avatar.startsWith("/uploads/") || avatar.includes("/uploads/") || avatar.startsWith("data:image/");
+
+const getAvatarFallback = (member) => {
+  const displayName = member?.name || "User";
+  return displayName.trim().charAt(0).toUpperCase() || "U";
+};
+
+const MemberAvatar = ({ member, index, isHost }) => {
+  const avatar = member.avatar || "";
+  const canRenderImage = isAvatarImage(avatar);
+
+  return (
   <motion.div
     initial={{ scale: 0, y: 5 }}
     animate={{ scale: 1, y: 0 }}
     transition={{ delay: 0.05 + index * 0.04, type: "spring", stiffness: 300 }}
     className="relative group/av"
   >
-    <div className={`w-9 h-9 rounded-full bg-secondary/80 border-[2.5px] border-background flex items-center justify-center text-sm shadow-sm ${
+    <div className={`w-9 h-9 rounded-full bg-secondary/80 border-[2.5px] border-background flex items-center justify-center text-sm font-black text-muted-foreground shadow-sm overflow-hidden ${
       index > 0 ? "-ml-2.5" : ""
     } ${member.status === "studying" ? "ring-2 ring-emerald-400/30" : ""}`}>
-      {member.avatar}
+      {canRenderImage ? (
+        <img src={avatar} alt={member.name || "Member"} className="w-full h-full object-cover" />
+      ) : (
+        <span className="truncate px-1">{avatar || getAvatarFallback(member)}</span>
+      )}
     </div>
     {isHost && index === 0 && (
       <Crown className="absolute -top-2 left-1/2 -translate-x-1/2 w-3 h-3 text-amber-400 drop-shadow-sm" />
@@ -47,15 +65,16 @@ const MemberAvatar = ({ member, index, isHost }) => (
         <PulsingDot size="w-2.5 h-2.5" />
       </span>
     )}
-    <div className="absolute -top-9 left-1/2 -translate-x-1/2 bg-foreground/95 backdrop-blur-sm text-background text-[9px] font-bold px-2.5 py-1 rounded-lg opacity-0 group-hover/av:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-20 shadow-lg">
+    <div className="hidden">
       {member.name}
       <span className="text-background/50 ml-1">{member.status === "studying" ? "• studying" : "• idle"}</span>
       <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-foreground/95 rotate-45" />
     </div>
   </motion.div>
-);
+  );
+};
 
-const RoomCard = ({ room, vibe, onCopy, onDelete, onJoin, index }) => {
+const RoomCard = ({ room, vibe, onCopy, onDelete, onJoin, index, currentUserId }) => {
   const studyingCount = room.members.filter((m) => m.status === "studying").length;
   const isFull = room.members.length >= room.maxMembers;
   const fillPercent = (room.members.length / room.maxMembers) * 100;
@@ -107,14 +126,18 @@ const RoomCard = ({ room, vibe, onCopy, onDelete, onJoin, index }) => {
           </div>
 
           <div className="flex items-center gap-1 shrink-0">
-            <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => onCopy(room.code)}
-              className="p-2 rounded-xl text-muted-foreground/40 hover:text-foreground hover:bg-secondary/60 transition-all" title="Copy code">
-              <Copy className="w-3.5 h-3.5" />
-            </motion.button>
-            <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => onDelete(room._id || room.id)}
-              className="p-2 rounded-xl text-muted-foreground/20 hover:text-destructive hover:bg-destructive/5 opacity-0 group-hover:opacity-100 transition-all">
-              <Trash2 className="w-3.5 h-3.5" />
-            </motion.button>
+            {room.isPrivate && room.owner === currentUserId && room.code && (
+              <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => onCopy(room.code)}
+                className="p-2 rounded-xl text-muted-foreground/40 hover:text-foreground hover:bg-secondary/60 transition-all" title="Copy code">
+                <Copy className="w-3.5 h-3.5" />
+              </motion.button>
+            )}
+            {room.owner === currentUserId && (
+              <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={() => onDelete(room._id || room.id)}
+                className="p-2 rounded-xl text-muted-foreground/20 hover:text-destructive hover:bg-destructive/5 opacity-0 group-hover:opacity-100 transition-all">
+                <Trash2 className="w-3.5 h-3.5" />
+              </motion.button>
+            )}
           </div>
         </div>
 
@@ -159,12 +182,14 @@ const RoomCard = ({ room, vibe, onCopy, onDelete, onJoin, index }) => {
 
           {/* Code + Join */}
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => onCopy(room.code)}
-              className="text-[10px] font-mono font-bold text-muted-foreground/60 bg-secondary/60 hover:bg-secondary px-2.5 py-1.5 rounded-lg border border-border/20 transition-colors hidden sm:block"
-            >
-              {room.code}
-            </button>
+            {room.isPrivate && room.owner === currentUserId && room.code && (
+              <button
+                onClick={() => onCopy(room.code)}
+                className="text-[10px] font-mono font-bold text-muted-foreground/60 bg-secondary/60 hover:bg-secondary px-2.5 py-1.5 rounded-lg border border-border/20 transition-colors hidden sm:block"
+              >
+                {room.code}
+              </button>
+            )}
             <motion.button
               whileHover={{ scale: 1.04, y: -1 }}
               whileTap={{ scale: 0.96 }}
@@ -194,15 +219,22 @@ const StudyRooms = () => {
   const [showCreate, setShowCreate] = useState(false);
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState("all");
+  const [joiningRoom, setJoiningRoom] = useState(null);
+  const [showJoinCode, setShowJoinCode] = useState(false);
+  const [roomCodeInput, setRoomCodeInput] = useState("");
+  const { user, session, profile, loading: authLoading } = useAuth();
   const navigate = useNavigate();
 
   useEffect(() => {
     fetchRooms();
-  }, []);
+  }, [session?.access_token]);
 
   const fetchRooms = async () => {
+    if (!session?.access_token) return;
     try {
-      const { data } = await axios.get(`${API_URL}/api/rooms`);
+      const { data } = await axios.get(`${API_URL}/api/rooms`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
       setRooms(data);
     } catch (error) {
       console.error(error);
@@ -211,18 +243,20 @@ const StudyRooms = () => {
   };
 
   const createRoom = async () => {
-    if (!newRoomName.trim()) return;
+    if (!newRoomName.trim() || !session?.access_token) return;
     try {
       const { data } = await axios.post(`${API_URL}/api/rooms`, {
         name: newRoomName,
         topic: newTopic,
         isPrivate
+      }, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
       });
       setRooms([data, ...rooms]);
       setNewRoomName("");
       setNewTopic("");
       setShowCreate(false);
-      toast.success("Room created!");
+      toast.success(data.isPrivate && data.code ? `Private room created. Code: ${data.code}` : "Room created!");
       navigate(`/rooms/${data._id}`);
     } catch (err) {
       toast.error("Failed to create room");
@@ -235,12 +269,59 @@ const StudyRooms = () => {
   };
 
   const joinRoom = (room) => {
-    navigate(`/rooms/${room._id}`);
+    if (room.isPrivate) {
+      setJoiningRoom(room);
+      setShowJoinCode(true);
+      setRoomCodeInput("");
+    } else {
+      // Direct join for public rooms
+      handleDirectJoin(room);
+    }
+  };
+
+  const handleDirectJoin = async (room) => {
+    if (!session?.access_token) return;
+    try {
+      await axios.post(`${API_URL}/api/rooms/${room._id}/join`, {
+        name: profile?.username || "Anonymous",
+        avatar: profile?.avatar_url || "🧑‍💻"
+      }, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      navigate(`/rooms/${room._id}`);
+    } catch (err) {
+      toast.error("Failed to join room");
+    }
+  };
+
+  const handleConfirmJoin = async () => {
+    if (roomCodeInput.length !== 5 || !session?.access_token) return;
+    
+    try {
+      const { data } = await axios.post(joiningRoom ? `${API_URL}/api/rooms/${joiningRoom._id}/join` : `${API_URL}/api/rooms/join-by-code`, {
+        code: roomCodeInput,
+        name: profile?.username || "Anonymous",
+        avatar: profile?.avatar_url || "🧑‍💻"
+      }, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
+      
+      toast.success("Joined room!");
+      setShowJoinCode(false);
+      setJoiningRoom(null);
+      setRoomCodeInput("");
+      navigate(`/rooms/${data._id || joiningRoom?._id}`);
+    } catch (err) {
+      toast.error(err.response?.data?.msg || "Invalid room code");
+    }
   };
 
   const deleteRoom = async (id) => {
+    if (!session?.access_token) return;
     try {
-      await axios.delete(`${API_URL}/api/rooms/${id}`);
+      await axios.delete(`${API_URL}/api/rooms/${id}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+      });
       setRooms(rooms.filter((r) => (r._id || r.id) !== id));
     } catch (e) {
       toast.error("Failed to delete room");
@@ -248,7 +329,7 @@ const StudyRooms = () => {
   };
 
   const filteredRooms = rooms.filter((r) => {
-    const matchSearch = r.name.toLowerCase().includes(search.toLowerCase()) || r.code.toLowerCase().includes(search.toLowerCase());
+    const matchSearch = r.name.toLowerCase().includes(search.toLowerCase()) || (r.code || "").toLowerCase().includes(search.toLowerCase());
     const matchType = filterType === "all" || (filterType === "public" && !r.isPrivate) || (filterType === "private" && r.isPrivate);
     return matchSearch && matchType;
   });
@@ -256,12 +337,35 @@ const StudyRooms = () => {
   const totalStudying = rooms.reduce((s, r) => s + r.members.filter((m) => m.status === "studying").length, 0);
   const totalMembers = rooms.reduce((s, r) => s + r.members.length, 0);
 
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+
+  if (!user) {
+    return (
+      <PageTransition>
+        <div className="min-h-screen flex flex-col items-center justify-center p-8 text-center space-y-6">
+          <div className="w-20 h-20 bg-primary/10 rounded-3xl flex items-center justify-center">
+            <Lock className="w-10 h-10 text-primary" />
+          </div>
+          <div className="space-y-2">
+            <h1 className="text-3xl font-display font-black text-foreground">Member Only Feature</h1>
+            <p className="text-muted-foreground max-w-xs mx-auto">Please sign in to access study rooms and study with others around the world.</p>
+          </div>
+          <div className="flex gap-4">
+            <Link to="/signin" className="bg-foreground text-background px-8 py-3 rounded-2xl font-bold transition-transform hover:scale-105 active:scale-95 shadow-xl">
+              Sign In
+            </Link>
+          </div>
+        </div>
+      </PageTransition>
+    );
+  }
+
   return (
     <PageTransition>
       <div className="min-h-screen p-4 md:p-8 pt-20 max-w-3xl mx-auto space-y-5">
 
         {/* Header */}
-        <motion.div initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} className="flex items-end justify-between">
+        <motion.div initial={{ opacity: 0, y: -15 }} animate={{ opacity: 1, y: 0 }} className="flex items-end justify-between gap-3">
           <div>
             <motion.div initial={{ x: -10, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.1 }}
               className="inline-flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.2em] text-primary mb-2">
@@ -269,10 +373,20 @@ const StudyRooms = () => {
             </motion.div>
             <h1 className="text-3xl md:text-4xl font-display font-black text-foreground tracking-tight leading-none">Study Rooms</h1>
           </div>
-          <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => setShowCreate(!showCreate)}
-            className="flex items-center gap-2 bg-foreground text-background px-5 py-2.5 rounded-xl font-display font-bold text-sm shadow-lg">
-            <Plus className="w-4 h-4" /> New Room
-          </motion.button>
+          <div className="flex items-center gap-2 shrink-0">
+            <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => {
+              setJoiningRoom(null);
+              setRoomCodeInput("");
+              setShowJoinCode(true);
+            }}
+              className="flex items-center gap-2 bg-secondary/70 text-foreground px-4 py-2.5 rounded-xl font-display font-bold text-sm border border-border/20">
+              <KeyRound className="w-4 h-4" /> Join Code
+            </motion.button>
+            <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={() => setShowCreate(!showCreate)}
+              className="flex items-center gap-2 bg-foreground text-background px-5 py-2.5 rounded-xl font-display font-bold text-sm shadow-lg">
+              <Plus className="w-4 h-4" /> New Room
+            </motion.button>
+          </div>
         </motion.div>
 
         {/* Live Banner */}
@@ -371,7 +485,7 @@ const StudyRooms = () => {
         <div className="space-y-3">
           <AnimatePresence mode="popLayout">
             {filteredRooms.map((room, idx) => (
-              <RoomCard key={room._id || room.id} room={room} vibe={getVibe(room._id || room.id)} onCopy={copyCode} onDelete={deleteRoom} onJoin={joinRoom} index={idx} />
+              <RoomCard key={room._id || room.id} room={room} vibe={getVibe(room._id || room.id)} onCopy={copyCode} onDelete={deleteRoom} onJoin={joinRoom} index={idx} currentUserId={user?.id} />
             ))}
           </AnimatePresence>
         </div>
@@ -387,6 +501,63 @@ const StudyRooms = () => {
             </p>
           </motion.div>
         )}
+
+        {/* Join Code Modal */}
+        <AnimatePresence>
+          {showJoinCode && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm">
+              <motion.div initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+                className="bg-card border border-border w-full max-w-md rounded-[32px] p-8 shadow-2xl space-y-6 relative">
+                <button onClick={() => {
+                  setShowJoinCode(false);
+                  setJoiningRoom(null);
+                  setRoomCodeInput("");
+                }} className="absolute top-6 right-6 p-2 rounded-full hover:bg-secondary transition-colors">
+                  <Plus className="w-5 h-5 rotate-45 text-muted-foreground" />
+                </button>
+                
+                <div className="space-y-2 text-center">
+                  <div className="w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                    <Lock className="w-8 h-8 text-primary" />
+                  </div>
+                  <h2 className="text-2xl font-display font-black text-foreground">Enter Room Code</h2>
+                  <p className="text-muted-foreground text-sm">
+                    {joiningRoom ? (
+                      <>To join <span className="font-bold text-foreground">{joiningRoom.name}</span>, enter the 5 digit room code.</>
+                    ) : (
+                      "Enter the 5 digit private room code shared by the owner."
+                    )}
+                  </p>
+                </div>
+
+                <div className="space-y-4">
+                  <input 
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={5}
+                    value={roomCodeInput} 
+                    onChange={(e) => setRoomCodeInput(e.target.value.replace(/\D/g, "").slice(0, 5))}
+                    placeholder="00000"
+                    className="w-full bg-secondary/50 border-2 border-border/50 rounded-2xl px-6 py-4 text-center text-xl font-mono font-bold tracking-widest focus:outline-none focus:border-primary/50 transition-all"
+                    autoFocus
+                    onKeyDown={(e) => e.key === "Enter" && handleConfirmJoin()}
+                  />
+                  
+                  <motion.button 
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={handleConfirmJoin}
+                    disabled={roomCodeInput.length !== 5}
+                    className="w-full bg-foreground text-background py-4 rounded-2xl font-display font-bold text-lg shadow-xl shadow-foreground/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Join Room
+                  </motion.button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </PageTransition>
   );

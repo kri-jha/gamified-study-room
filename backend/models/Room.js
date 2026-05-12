@@ -11,10 +11,11 @@ const RoomSchema = new mongoose.Schema({
   name: { type: String, required: true },
   code: { type: String, required: true, unique: true },
   isPrivate: { type: Boolean, default: false },
+  owner: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   maxMembers: { type: Number, default: 10 },
   topic: { type: String, default: "" },
   timer: { type: String, default: "00:00:00" },
-  members: [MemberSchema]
+  members: { type: [MemberSchema], default: [] }
 }, { timestamps: true });
 
 module.exports = mongoose.model("Room", RoomSchema);

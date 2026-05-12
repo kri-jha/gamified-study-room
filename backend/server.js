@@ -5,6 +5,8 @@ const mongoose = require("mongoose");
 const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
+const jwt = require("jsonwebtoken");
+const Room = require("./models/Room");
 
 const app = express();
 const server = http.createServer(app);
@@ -39,14 +41,46 @@ app.use("/api/ai", require("./routes/ai")); // chatbot router
 io.on("connection", (socket) => {
   console.log("User connected to socket:", socket.id);
 
-  socket.on("join_room", (roomId) => {
-    socket.join(roomId);
-    console.log(`User ${socket.id} joined room ${roomId}`);
-    // Broadcast to room that someone joined
-    socket.to(roomId).emit("user_joined", { id: socket.id });
+  socket.on("join_room", async (payload) => {
+    const roomId = typeof payload === "string" ? payload : payload?.roomId;
+    const token = typeof payload === "object" ? payload?.token : null;
+
+    try {
+      const room = await Room.findById(roomId);
+      if (!room) {
+        socket.emit("room_join_denied", { msg: "Room not found" });
+        return;
+      }
+
+      if (room.isPrivate) {
+        if (!token) {
+          socket.emit("room_join_denied", { msg: "Room code required" });
+          return;
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET || "fallback_secret");
+        const userId = decoded.user?.id;
+        const isOwner = room.owner && room.owner.toString() === userId;
+        const isMember = room.members.some((member) => member.userId === userId);
+
+        if (!isOwner && !isMember) {
+          socket.emit("room_join_denied", { msg: "Access denied" });
+          return;
+        }
+      }
+
+      socket.join(roomId);
+      console.log(`User ${socket.id} joined room ${roomId}`);
+      // Broadcast to room that someone joined
+      socket.to(roomId).emit("user_joined", { id: socket.id });
+    } catch (err) {
+      console.error("Socket room join failed:", err.message);
+      socket.emit("room_join_denied", { msg: "Access denied" });
+    }
   });
 
   socket.on("leave_room", (roomId) => {
+    if (!socket.rooms.has(roomId)) return;
     socket.leave(roomId);
     console.log(`User ${socket.id} left room ${roomId}`);
     socket.to(roomId).emit("user_left", { id: socket.id });
@@ -54,11 +88,13 @@ io.on("connection", (socket) => {
 
   socket.on("send_message", (data) => {
     // data = { roomId, message, sender... }
+    if (!data?.roomId || !socket.rooms.has(data.roomId)) return;
     io.to(data.roomId).emit("receive_message", data);
   });
 
   socket.on("status_change", (data) => {
     // data = { roomId, userId, status }
+    if (!data?.roomId || !socket.rooms.has(data.roomId)) return;
     io.to(data.roomId).emit("user_status_changed", data);
   });
 

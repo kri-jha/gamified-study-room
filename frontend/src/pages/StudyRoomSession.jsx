@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { io } from "socket.io-client";
 import axios from "axios";
-import { ArrowLeft, Users, Send, Play, Pause, Square, Bot, Trophy, MessageCircle, Clock, Share2, Check } from "lucide-react";
+import { ArrowLeft, Users, Send, Play, Pause, Square, Bot, Trophy, MessageCircle, Clock, Share2, Check, Lock } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import PageTransition from "@/components/PageTransition";
@@ -29,7 +29,7 @@ const getElapsed = () => {
 const StudyRoomSession = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { user, refreshProfile } = useAuth();
+  const { user, session, profile, refreshProfile, loading: authLoading } = useAuth();
 
   const [room, setRoom] = useState(null);
   const [status, setStatus] = useState("studying");
@@ -61,17 +61,19 @@ const StudyRoomSession = () => {
   // ── Load room + Socket setup ───────────────────────────────────────────────
   useEffect(() => {
     const fetchRoom = async () => {
+      if (!session?.access_token) return;
       try {
-        const { data } = await axios.get(`${API_URL}/api/rooms`);
-        const currentRoom = data.find(r => r._id === id || r.code === id);
-        if (!currentRoom) { toast.error("Room not found"); navigate("/rooms"); return; }
-        setRoom(currentRoom);
-        socket.emit("join_room", currentRoom._id);
+        const { data } = await axios.get(`${API_URL}/api/rooms/${id}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` }
+        });
+        setRoom(data);
+        socket.emit("join_room", { roomId: data._id, token: session.access_token });
         // Mark user as live in localStorage (for green dot on profile)
-        localStorage.setItem("gazen_in_room", currentRoom._id);
+        localStorage.setItem("gazen_in_room", data._id);
       } catch (err) {
         console.error(err);
-        toast.error("Error loading room");
+        toast.error(err.response?.data?.msg || "Error loading room");
+        navigate("/rooms");
       }
     };
 
@@ -79,6 +81,10 @@ const StudyRoomSession = () => {
 
     socket.on("user_joined", () => toast.success("A new user joined the room 👋"));
     socket.on("user_left", () => toast("A user left the room"));
+    socket.on("room_join_denied", (data) => {
+      toast.error(data?.msg || "Access denied");
+      navigate("/rooms");
+    });
     socket.on("receive_message", (data) => setMessages((prev) => [...prev, data]));
     socket.on("sync_timer", (val) => { if (timerMode === "group") setTimerSeconds(val); });
 
@@ -92,11 +98,12 @@ const StudyRoomSession = () => {
       localStorage.removeItem("gazen_in_room");
       socket.off("user_joined");
       socket.off("user_left");
+      socket.off("room_join_denied");
       socket.off("receive_message");
       socket.off("sync_timer");
       // NOTE: we do NOT emit leave_room here so timer keeps running in background
     };
-  }, [id, navigate, timerMode]);
+  }, [id, navigate, timerMode, session?.access_token]);
 
   // ── Page Visibility API — re-sync timer when tab becomes active again ──────
   useEffect(() => {
@@ -213,13 +220,19 @@ const StudyRoomSession = () => {
   const shareRoom = async () => {
     if (!room) return;
     const shareUrl = `${window.location.origin}/rooms/${room._id}`;
+    const isPrivateOwner = room.isPrivate && room.owner === user?.id && room.code;
+    const shareText = isPrivateOwner ? room.code : shareUrl;
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      await navigator.clipboard.writeText(shareText);
       setCopied(true);
+      if (isPrivateOwner) {
+        toast.success("Room code copied!");
+      } else {
       toast.success("Room link copied! Share it with your study buddies 🔗");
+      }
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast.error("Failed to copy link");
+      toast.error("Failed to copy invite");
     }
   };
 
@@ -230,6 +243,19 @@ const StudyRoomSession = () => {
     const s = (totalSeconds % 60).toString().padStart(2, "0");
     return `${h}:${m}:${s}`;
   };
+
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center">Loading auth...</div>;
+  
+  if (!user) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center p-8 text-center space-y-4">
+        <Lock className="w-12 h-12 text-primary" />
+        <h1 className="text-2xl font-display font-black">Authentication Required</h1>
+        <p className="text-muted-foreground">Please sign in to join this study session.</p>
+        <button onClick={() => navigate("/signin")} className="bg-foreground text-background px-6 py-2 rounded-xl font-bold">Sign In</button>
+      </div>
+    );
+  }
 
   if (!room) return (
     <div className="min-h-screen flex items-center justify-center pt-20">
@@ -258,10 +284,12 @@ const StudyRoomSession = () => {
               Live Room • {room.topic || "General Focus"}
             </p>
           </div>
-          {/* Room Code */}
-          <div className="bg-secondary/50 px-4 py-2 rounded-xl text-sm font-mono font-bold text-muted-foreground border border-border/20">
-            {room.code}
-          </div>
+          {/* Room Code - Only visible to owner */}
+          {room.isPrivate && room.owner === user?.id && room.code && (
+            <div className="bg-secondary/50 px-4 py-2 rounded-xl text-sm font-mono font-bold text-muted-foreground border border-border/20">
+              {room.code}
+            </div>
+          )}
           {/* Share Button */}
           <motion.button
             whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
@@ -344,10 +372,14 @@ const StudyRoomSession = () => {
             <div className="h-28 glass rounded-2xl border border-border/20 p-4 flex gap-3 overflow-x-auto items-center">
                 <div className="flex flex-col items-center gap-1 shrink-0">
                   <div className="relative">
-                    <div className="w-14 h-14 rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center text-xl shadow-md">🧑‍💻</div>
-                    <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-background"></span>
+                    <div className={`w-14 h-14 rounded-full ${isTimerRunning ? "bg-emerald-500/20 border-emerald-500" : "bg-secondary/50 border-border/40"} border-2 flex items-center justify-center text-xl shadow-md transition-all`}>
+                      {profile?.avatar_url ? <img src={profile.avatar_url} className="w-full h-full object-cover rounded-full" /> : "🧑‍💻"}
+                    </div>
+                    {isTimerRunning && (
+                      <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-background animate-pulse"></span>
+                    )}
                   </div>
-                  <span className="text-[10px] font-bold text-foreground">{user?.username || "You"}</span>
+                  <span className="text-[10px] font-bold text-foreground">{profile?.username || "You"}</span>
                 </div>
                 <div className="w-[1px] h-10 bg-border/40 mx-2"></div>
                 <div className="text-sm font-bold text-muted-foreground flex gap-2 items-center">
