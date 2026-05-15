@@ -33,6 +33,7 @@ mongoose
 // Routes
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/users", require("./routes/users"));
+app.use("/api/quests", require("./routes/quests"));
 app.use("/api/rooms", require("./routes/rooms")); // the new rooms router
 app.use("/api/ai", require("./routes/ai")); // chatbot router
 

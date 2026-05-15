@@ -183,8 +183,12 @@ router.get("/:id/following", async (req, res) => {
 
 // ─── Add XP ───────────────────────────────────────────────────────────────────
 // @route   POST /api/users/:id/xp
-router.post("/:id/xp", async (req, res) => {
+router.post("/:id/xp", auth, async (req, res) => {
   try {
+    if (req.user.id !== req.params.id) {
+      return res.status(403).json({ error: "Cannot update XP for another user" });
+    }
+
     const { seconds } = req.body;
     const minutes = Math.floor(seconds / 60);
     let xpGain = Math.floor(minutes / 2);
