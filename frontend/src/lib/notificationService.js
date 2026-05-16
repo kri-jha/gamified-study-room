@@ -32,7 +32,67 @@ const REMINDER_MESSAGES = {
     { title: "🔔 Task Complete", body: "You reached your focus goal! Take a short break." },
     { title: "🏆 Session Finished", body: "Timer complete! Don't forget to save your XP." },
   ],
+  pomodoroFocus: [
+    { title: "Pomodoro Focus Complete", body: "Nice grind. Your 5 minute break is starting now." },
+    { title: "Focus Round Cleared", body: "Step away, stretch, hydrate. Break mode is on." },
+  ],
+  pomodoroBreak: [
+    { title: "Pomodoro Break Complete", body: "Break is over. Your next focus round is starting." },
+    { title: "Back to Focus", body: "Reset your posture and lock in for the next Pomodoro." },
+  ],
 };
+
+let pomodoroAudioContext = null;
+
+const getPomodoroAudioContext = () => {
+  if (typeof window === "undefined") return null;
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return null;
+  if (!pomodoroAudioContext) pomodoroAudioContext = new AudioContext();
+  return pomodoroAudioContext;
+};
+
+export function primePomodoroAlertSound() {
+  const ctx = getPomodoroAudioContext();
+  if (!ctx) return;
+  if (ctx.state === "suspended") {
+    ctx.resume().catch(() => {});
+  }
+}
+
+export function playPomodoroAlertSound() {
+  const ctx = getPomodoroAudioContext();
+  if (!ctx) return;
+
+  const startSound = () => {
+    const now = ctx.currentTime;
+    const notes = [880, 1175, 988];
+
+    notes.forEach((frequency, index) => {
+      const oscillator = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const start = now + index * 0.18;
+      const end = start + 0.13;
+
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(frequency, start);
+      gain.gain.setValueAtTime(0.001, start);
+      gain.gain.exponentialRampToValueAtTime(0.18, start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, end);
+
+      oscillator.connect(gain);
+      gain.connect(ctx.destination);
+      oscillator.start(start);
+      oscillator.stop(end);
+    });
+  };
+
+  if (ctx.state === "suspended") {
+    ctx.resume().then(startSound).catch(() => {});
+  } else {
+    startSound();
+  }
+}
 
 export function getRandomMessage(vibe = "motivational") {
   const messages = REMINDER_MESSAGES[vibe] || REMINDER_MESSAGES.motivational;
@@ -50,6 +110,7 @@ export async function requestNotificationPermission() {
 }
 
 export function sendNotification(vibe = "motivational") {
+  if (!("Notification" in window)) return null;
   if (Notification.permission !== "granted") return null;
   const msg = getRandomMessage(vibe);
   const notification = new Notification(msg.title, {
@@ -57,7 +118,7 @@ export function sendNotification(vibe = "motivational") {
     icon: "/favicon.ico",
     badge: "/favicon.ico",
     vibrate: [200, 100, 200],
-    tag: "study-reminder",
+    tag: vibe.startsWith("pomodoro") ? "pomodoro-alert" : "study-reminder",
     renotify: true,
   });
   return notification;
@@ -108,10 +169,12 @@ class ReminderScheduler {
   }
 
   // Smart break: notify after X minutes of study
-  scheduleSmartBreak(studyMinutes) {
+  scheduleSmartBreak(studyMinutes, options = {}) {
+    const { alertSound = false, notificationVibe = "breaks" } = options;
     const ms = studyMinutes * 60 * 1000;
     const timer = setTimeout(() => {
-      sendNotification("breaks");
+      if (alertSound) playPomodoroAlertSound();
+      sendNotification(notificationVibe);
     }, ms);
     this.timers.push(timer);
     return timer;

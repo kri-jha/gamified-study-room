@@ -1,12 +1,17 @@
 import { useState, useEffect, useRef } from "react";
-import { Play, Pause, RotateCcw, Square, Zap, Clock, Timer as TimerIcon } from "lucide-react";
+import { Play, Pause, RotateCcw, Square, Zap, Clock, Timer as TimerIcon, Coffee } from "lucide-react";
 import PageTransition from "@/components/PageTransition";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/contexts/AuthContext";
 import { saveSession } from "@/lib/saveSession";
 import { Link } from "react-router-dom";
-import { sendNotification } from "@/lib/notificationService";
+import {
+  playPomodoroAlertSound,
+  primePomodoroAlertSound,
+  requestNotificationPermission,
+  sendNotification,
+} from "@/lib/notificationService";
 
 // ── Background-safe Timer Keys ────────────────────────────────────────────────
 const T_START = "gazen_solo_timer_start";
@@ -14,6 +19,11 @@ const T_OFFSET = "gazen_solo_timer_offset";
 const T_RUNNING = "gazen_solo_timer_running";
 const T_MODE = "gazen_solo_timer_mode";
 const T_TIMER_INITIAL = "gazen_solo_timer_initial";
+const P_PHASE = "gazen_pomodoro_phase";
+const P_CYCLE = "gazen_pomodoro_cycle";
+const P_FOCUS_INITIAL = "gazen_pomodoro_focus_initial";
+const P_BREAK_INITIAL = "gazen_pomodoro_break_initial";
+const P_STUDY_SECONDS = "gazen_pomodoro_study_seconds";
 
 const getElapsed = () => {
   const start = Number(localStorage.getItem(T_START) || 0);
@@ -35,6 +45,21 @@ const StudyTimer = () => {
   const [timerInitial, setTimerInitial] = useState(
     () => Number(localStorage.getItem(T_TIMER_INITIAL) || 1500) // Default 25 mins
   );
+  const [pomodoroPhase, setPomodoroPhase] = useState(
+    () => localStorage.getItem(P_PHASE) || "focus"
+  );
+  const [pomodoroCycle, setPomodoroCycle] = useState(
+    () => Number(localStorage.getItem(P_CYCLE) || 1)
+  );
+  const [pomodoroFocusInitial, setPomodoroFocusInitial] = useState(
+    () => Number(localStorage.getItem(P_FOCUS_INITIAL) || 1500)
+  );
+  const [pomodoroBreakInitial, setPomodoroBreakInitial] = useState(
+    () => Number(localStorage.getItem(P_BREAK_INITIAL) || 300)
+  );
+  const [pomodoroStudySeconds, setPomodoroStudySeconds] = useState(
+    () => Number(localStorage.getItem(P_STUDY_SECONDS) || 0)
+  );
 
   const [tabSwitchCount, setTabSwitchCount] = useState(0);
   const [warnings, setWarnings] = useState([]);
@@ -42,13 +67,48 @@ const StudyTimer = () => {
   const [lastSession, setLastSession] = useState(null);
 
   const tickRef = useRef(null);
-  const audioRef = useRef(null);
+  const pomodoroCompletedRef = useRef(false);
+  const modeRef = useRef(mode);
+  const pomodoroPhaseRef = useRef(pomodoroPhase);
+  const pomodoroCycleRef = useRef(pomodoroCycle);
+  const pomodoroFocusInitialRef = useRef(pomodoroFocusInitial);
+  const pomodoroBreakInitialRef = useRef(pomodoroBreakInitial);
+  const pomodoroStudySecondsRef = useRef(pomodoroStudySeconds);
+
+  const isCountdownMode = mode === "timer" || mode === "pomodoro";
+  const currentTimerInitial = mode === "pomodoro"
+    ? (pomodoroPhase === "focus" ? pomodoroFocusInitial : pomodoroBreakInitial)
+    : timerInitial;
+
+  useEffect(() => {
+    modeRef.current = mode;
+    pomodoroPhaseRef.current = pomodoroPhase;
+    pomodoroCycleRef.current = pomodoroCycle;
+    pomodoroFocusInitialRef.current = pomodoroFocusInitial;
+    pomodoroBreakInitialRef.current = pomodoroBreakInitial;
+    pomodoroStudySecondsRef.current = pomodoroStudySeconds;
+  }, [mode, pomodoroPhase, pomodoroCycle, pomodoroFocusInitial, pomodoroBreakInitial, pomodoroStudySeconds]);
+
+  const getActiveCountdownInitial = () => {
+    if (modeRef.current === "pomodoro") {
+      return pomodoroPhaseRef.current === "focus"
+        ? pomodoroFocusInitialRef.current
+        : pomodoroBreakInitialRef.current;
+    }
+    return timerInitial;
+  };
 
   // ── Re-sync display when tab becomes active ───────────────────────────────
   useEffect(() => {
     const onVisibility = () => {
       if (!document.hidden) {
-        setSeconds(getElapsed());
+        const elapsed = getElapsed();
+        setSeconds(elapsed);
+        const activeCountdown = modeRef.current === "timer" || modeRef.current === "pomodoro";
+        if (isRunning && activeCountdown && elapsed >= getActiveCountdownInitial() && !pomodoroCompletedRef.current) {
+          pomodoroCompletedRef.current = true;
+          handleTimerComplete();
+        }
       } else if (isRunning) {
         setTabSwitchCount((c) => c + 1);
         setWarnings((w) => [...w, `⚠️ Tab switch at ${formatTime(getDisplaySeconds(getElapsed()))}`]);
@@ -56,7 +116,7 @@ const StudyTimer = () => {
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [isRunning, mode, timerInitial]);
+  }, [isRunning, currentTimerInitial]);
 
   // ── Tick the display every second ────────────────────────────────────────
   useEffect(() => {
@@ -65,45 +125,85 @@ const StudyTimer = () => {
         const elapsed = getElapsed();
         setSeconds(elapsed);
 
-        // Check for timer completion
-        if (mode === "timer" && elapsed >= timerInitial) {
+        const activeCountdown = modeRef.current === "timer" || modeRef.current === "pomodoro";
+        if (activeCountdown && elapsed >= getActiveCountdownInitial() && !pomodoroCompletedRef.current) {
+          pomodoroCompletedRef.current = true;
           handleTimerComplete();
         }
       }, 1000);
     } else {
       clearInterval(tickRef.current);
+      pomodoroCompletedRef.current = false;
     }
     return () => clearInterval(tickRef.current);
-  }, [isRunning, mode, timerInitial]);
+  }, [isRunning, currentTimerInitial]);
 
-  const handleTimerComplete = () => {
-    handlePause();
-    setSeconds(timerInitial); // Snap to end
-    sendNotification("timer");
-    toast.success("⏰ Time's up! Great session.");
-    
-    // Play sound if possible
-    try {
-      if (!audioRef.current) {
-        audioRef.current = new Audio("https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3");
-      }
-      audioRef.current.play();
-    } catch (e) {
-      console.log("Audio play blocked");
-    }
-  };
-
-  // ── Controls ──────────────────────────────────────────────────────────────
-  const handleStart = () => {
-    if (mode === "timer" && seconds >= timerInitial) {
-      toast.error("Reset the timer to start again!");
-      return;
-    }
-    localStorage.setItem(T_OFFSET, String(seconds));
+  const startClock = (offset = seconds) => {
+    localStorage.setItem(T_OFFSET, String(offset));
     localStorage.setItem(T_START, String(Date.now()));
     localStorage.setItem(T_RUNNING, "true");
     setIsRunning(true);
     setLastSession(null);
+  };
+
+  const handleTimerComplete = () => {
+    if (modeRef.current === "pomodoro") {
+      const completedPhase = pomodoroPhaseRef.current;
+      const nextPhase = completedPhase === "focus" ? "break" : "focus";
+      const nextCycle = completedPhase === "break" ? pomodoroCycleRef.current + 1 : pomodoroCycleRef.current;
+      const completedSeconds = completedPhase === "focus"
+        ? pomodoroFocusInitialRef.current
+        : pomodoroBreakInitialRef.current;
+
+      localStorage.setItem(T_OFFSET, "0");
+      localStorage.setItem(T_START, String(Date.now()));
+      localStorage.setItem(T_RUNNING, "true");
+      localStorage.setItem(P_PHASE, nextPhase);
+      localStorage.setItem(P_CYCLE, String(nextCycle));
+      setSeconds(0);
+      setIsRunning(true);
+      setPomodoroPhase(nextPhase);
+      setPomodoroCycle(nextCycle);
+      pomodoroPhaseRef.current = nextPhase;
+      pomodoroCycleRef.current = nextCycle;
+
+      if (completedPhase === "focus") {
+        const nextStudySeconds = pomodoroStudySecondsRef.current + completedSeconds;
+        localStorage.setItem(P_STUDY_SECONDS, String(nextStudySeconds));
+        setPomodoroStudySeconds(nextStudySeconds);
+        pomodoroStudySecondsRef.current = nextStudySeconds;
+      }
+
+      playPomodoroAlertSound();
+      sendNotification(completedPhase === "focus" ? "pomodoroFocus" : "pomodoroBreak");
+      toast.success(completedPhase === "focus" ? "Pomodoro focus done. Break started!" : "Break done. Next focus started!");
+
+      window.setTimeout(() => {
+        pomodoroCompletedRef.current = false;
+      }, 500);
+      return;
+    }
+    handlePause();
+    setSeconds(timerInitial); // Snap to end
+    sendNotification("timer");
+    toast.success("⏰ Time's up! Great session.");
+  };
+
+  // ── Controls ──────────────────────────────────────────────────────────────
+  const handleStart = () => {
+    if (isCountdownMode && seconds >= currentTimerInitial) {
+      toast.error("Reset the timer to start again!");
+      return;
+    }
+    if (mode === "pomodoro") {
+      primePomodoroAlertSound();
+      requestNotificationPermission().then((result) => {
+        if (result === "denied") {
+          toast.info("Browser notification blocked hai, Pomodoro sound app ke andar chalega.");
+        }
+      });
+    }
+    startClock(seconds);
   };
 
   const handlePause = () => {
@@ -119,12 +219,22 @@ const StudyTimer = () => {
     localStorage.removeItem(T_START);
     localStorage.removeItem(T_OFFSET);
     localStorage.setItem(T_RUNNING, "false");
+    localStorage.setItem(P_PHASE, "focus");
+    localStorage.setItem(P_CYCLE, "1");
+    localStorage.setItem(P_STUDY_SECONDS, "0");
+    setPomodoroPhase("focus");
+    setPomodoroCycle(1);
+    setPomodoroStudySeconds(0);
     setTabSwitchCount(0);
     setWarnings([]);
   };
 
   const handleStop = async () => {
-    const elapsed = mode === "timer" ? Math.min(seconds, timerInitial) : seconds;
+    const elapsed = mode === "pomodoro"
+      ? pomodoroStudySeconds + (pomodoroPhase === "focus" ? Math.min(seconds, pomodoroFocusInitial) : 0)
+      : mode === "timer"
+        ? Math.min(seconds, timerInitial)
+        : seconds;
     handlePause();
     handleReset();
 
@@ -168,10 +278,20 @@ const StudyTimer = () => {
     handleReset();
   };
 
+  const updatePomodoroDurations = (focusMin, breakMin) => {
+    const focusSecs = focusMin * 60;
+    const breakSecs = breakMin * 60;
+    setPomodoroFocusInitial(focusSecs);
+    setPomodoroBreakInitial(breakSecs);
+    localStorage.setItem(P_FOCUS_INITIAL, String(focusSecs));
+    localStorage.setItem(P_BREAK_INITIAL, String(breakSecs));
+    handleReset();
+  };
+
   // ── Formatting ────────────────────────────────────────────────────────────
   const getDisplaySeconds = (s) => {
     if (mode === "stopwatch") return s;
-    return Math.max(0, timerInitial - s);
+    return Math.max(0, currentTimerInitial - s);
   };
 
   const formatTime = (s) => {
@@ -182,16 +302,34 @@ const StudyTimer = () => {
   };
 
   const displaySeconds = getDisplaySeconds(seconds);
-  const previewXp = Math.floor(Math.floor(seconds / 60) / 2)
-    + (seconds >= 3600 ? Math.floor(Math.floor(seconds / 60) / 60) * 2 : 0);
+  const studyCreditSeconds = mode === "pomodoro"
+    ? pomodoroStudySeconds + (pomodoroPhase === "focus" ? Math.min(seconds, pomodoroFocusInitial) : 0)
+    : seconds;
+  const previewXp = Math.floor(Math.floor(studyCreditSeconds / 60) / 2)
+    + (studyCreditSeconds >= 3600 ? Math.floor(Math.floor(studyCreditSeconds / 60) / 60) * 2 : 0);
   
   // Progress calc
   let progressPct;
   if (mode === "stopwatch") {
     progressPct = (seconds % 60) / 60;
   } else {
-    progressPct = displaySeconds / timerInitial;
+    progressPct = displaySeconds / currentTimerInitial;
   }
+
+  const titleLabel = mode === "stopwatch"
+    ? "Stopwatch"
+    : mode === "pomodoro"
+      ? "Pomodoro"
+      : "Focus Timer";
+  const statusLabel = mode === "pomodoro"
+    ? `${pomodoroPhase === "focus" ? "Focus" : "Break"} - Round ${pomodoroCycle}`
+    : mode === "timer" && displaySeconds === 0 && seconds > 0
+      ? "Done"
+      : !isRunning && seconds === 0
+        ? "Ready"
+        : !isRunning
+          ? "Paused"
+          : "Studying";
 
   return (
     <PageTransition>
@@ -199,12 +337,12 @@ const StudyTimer = () => {
         <div className="max-w-lg w-full space-y-6">
           <div className="text-center">
             <h1 className="text-3xl font-display font-extrabold text-foreground">
-              {mode === "stopwatch" ? "⏱️ Stopwatch" : "⏰ Focus Timer"}
+              {titleLabel}
             </h1>
             
             {/* Mode Switcher */}
             <div className="flex justify-center mt-4">
-              <div className="bg-secondary/50 p-1 rounded-xl flex gap-1">
+              <div className="bg-secondary/50 p-1 rounded-xl flex flex-wrap justify-center gap-1">
                 <button
                   onClick={() => switchMode("stopwatch")}
                   className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${mode === "stopwatch" ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
@@ -216,6 +354,12 @@ const StudyTimer = () => {
                   className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${mode === "timer" ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
                 >
                   <TimerIcon className="w-4 h-4" /> Timer
+                </button>
+                <button
+                  onClick={() => switchMode("pomodoro")}
+                  className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-bold transition-all ${mode === "pomodoro" ? "bg-background text-primary shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+                >
+                  <Coffee className="w-4 h-4" /> Pomodoro
                 </button>
               </div>
             </div>
@@ -237,10 +381,9 @@ const StudyTimer = () => {
               <div className="absolute inset-0 flex flex-col items-center justify-center">
                 <p className="text-5xl font-display font-bold text-foreground tracking-widest">{formatTime(displaySeconds)}</p>
                 <p className="text-sm text-muted-foreground mt-2">
-                  {mode === "timer" && displaySeconds === 0 && seconds > 0 ? "🏁 Done!" : 
-                   !isRunning && seconds === 0 ? "Ready" : !isRunning ? "⏸ Paused" : "🟢 Studying"}
+                  {statusLabel}
                 </p>
-                {seconds >= 120 && (
+                {studyCreditSeconds >= 120 && (
                   <p className="text-xs text-primary font-semibold mt-1 flex items-center gap-1">
                     <Zap className="w-3 h-3" /> +{previewXp} XP on stop
                   </p>
@@ -264,8 +407,45 @@ const StudyTimer = () => {
             </div>
           )}
 
+          {mode === "pomodoro" && !isRunning && seconds === 0 && pomodoroStudySeconds === 0 && (
+            <div className="flex flex-wrap justify-center gap-2 animate-in fade-in slide-in-from-top-2">
+              {[
+                { label: "15/3", focus: 15, break: 3 },
+                { label: "25/5", focus: 25, break: 5 },
+                { label: "50/10", focus: 50, break: 10 },
+              ].map((preset) => (
+                <button
+                  key={preset.label}
+                  onClick={() => updatePomodoroDurations(preset.focus, preset.break)}
+                  className={`px-4 py-2 rounded-lg text-sm font-bold border transition-all ${pomodoroFocusInitial === preset.focus * 60 && pomodoroBreakInitial === preset.break * 60 ? "bg-primary/10 border-primary text-primary" : "border-border hover:border-primary/50 text-muted-foreground"}`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {mode === "pomodoro" && (
+            <div className="glass rounded-xl p-4 border border-primary/20 soft-shadow">
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <p className="text-sm font-bold text-foreground">{Math.round(pomodoroFocusInitial / 60)}m</p>
+                  <p className="text-xs text-muted-foreground">Focus</p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-foreground">{Math.round(pomodoroBreakInitial / 60)}m</p>
+                  <p className="text-xs text-muted-foreground">Break</p>
+                </div>
+                <div>
+                  <p className="text-sm font-bold text-primary">On</p>
+                  <p className="text-xs text-muted-foreground">Alert sound</p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Controls */}
-          <div className="flex justify-center gap-4">
+          <div className="flex flex-wrap justify-center gap-4">
             {!isRunning ? (
               <motion.button whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
                 onClick={handleStart}
@@ -302,7 +482,7 @@ const StudyTimer = () => {
               <p className="text-xs text-muted-foreground">XP Preview</p>
             </div>
             <div className="glass rounded-xl p-3 text-center soft-shadow">
-              <p className="text-xl font-display font-bold text-accent">{(seconds / 3600).toFixed(2)}h</p>
+              <p className="text-xl font-display font-bold text-accent">{(studyCreditSeconds / 3600).toFixed(2)}h</p>
               <p className="text-xs text-muted-foreground">Session Hrs</p>
             </div>
             <div className="glass rounded-xl p-3 text-center soft-shadow">

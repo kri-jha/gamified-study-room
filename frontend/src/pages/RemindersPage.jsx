@@ -11,6 +11,7 @@ import {
   sendNotification,
   getRandomMessage,
   reminderScheduler,
+  primePomodoroAlertSound,
 } from "@/lib/notificationService";
 import { toast } from "sonner";
 
@@ -233,7 +234,15 @@ const RemindersPage = () => {
     reminderScheduler.clearAll();
     if (scheduledTimes.length > 0) reminderScheduler.scheduleAtTimes(scheduledTimes, activeVibe);
     if (activePreset !== null) reminderScheduler.scheduleInterval(PRESETS[activePreset].minutes, activeVibe);
-    if (activeBreak !== null) reminderScheduler.scheduleSmartBreak(SMART_BREAKS[activeBreak].studyMin);
+    if (activeBreak !== null) {
+      const selectedBreak = SMART_BREAKS[activeBreak];
+      const isPomodoroBreak = selectedBreak.label === "Pomodoro";
+      if (isPomodoroBreak) primePomodoroAlertSound();
+      reminderScheduler.scheduleSmartBreak(selectedBreak.studyMin, {
+        alertSound: isPomodoroBreak,
+        notificationVibe: isPomodoroBreak ? "pomodoroFocus" : "breaks",
+      });
+    }
     setIsActive(true);
     toast.success("Reminders deployed 🚀");
   }, [permission, scheduledTimes, activePreset, activeBreak, activeVibe]);
